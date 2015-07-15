@@ -29,56 +29,37 @@ namespace stan {
 
   namespace variational {
 
-    /*
-     * MULTIVARIATE NORMAL DISTRIBUTION FULL-RANK
-     *
-     * Variational family as full-rank multivariate normal distribution
-     *
-     * @param  mu     mean vector
-     * @param  L_chol cholesky factor of covariance (\Sigma = L_chol *
-     *                L_chol.transpose())
-     */
     class normal_fullrank : public base_family {
     private:
       Eigen::VectorXd mu_;
-      Eigen::MatrixXd L_chol_;
+      Eigen::MatrixXd L_;
       int dimension_;
 
     public:
-      // Constructors
+      // TODO explicitly describe all these guys
       explicit normal_fullrank(size_t dimension) :
         dimension_(dimension) {
-        mu_     = Eigen::VectorXd::Zero(dimension_);
-        L_chol_  = Eigen::MatrixXd::Identity(dimension_, dimension_);
+        mu_ = Eigen::VectorXd::Zero(dimension_);
+        L_  = Eigen::MatrixXd::Identity(dimension_, dimension_);
       }
 
       explicit normal_fullrank(const Eigen::VectorXd& cont_params) :
-        mu_(cont_params), dimension_(cont_params.size()) {
-        L_chol_  = Eigen::MatrixXd::Identity(dimension_, dimension_);
+        dimension_(cont_params.size()) {
+        set_mu(cont_params);
+        L_  = Eigen::MatrixXd::Identity(dimension_, dimension_);
       }
 
       normal_fullrank(const Eigen::VectorXd& mu,
-                      const Eigen::MatrixXd& L_chol) :
-      mu_(mu), L_chol_(L_chol), dimension_(mu.size()) {
-        static const char* function =
-          "stan::variational::normal_fullrank";
-
-        stan::math::check_square(function, "Cholesky factor", L_chol_);
-        stan::math::check_lower_triangular(function,
-                               "Cholesky factor", L_chol_);
-        stan::math::check_size_match(function,
-                               "Dimension of mean vector",     dimension_,
-                               "Dimension of Cholesky factor", L_chol_.rows() );
-        stan::math::check_not_nan(function, "Mean vector", mu_);
-        stan::math::check_not_nan(function, "Cholesky factor", L_chol_);
+                      const Eigen::MatrixXd& L) :
+        dimension_(mu.size()) {
+        set_mu(mu);
+        set_L(L);
       }
 
-      // Accessors
       int dimension() const { return dimension_; }
-      const Eigen::VectorXd& mu()     const { return mu_; }
-      const Eigen::MatrixXd& L_chol() const { return L_chol_; }
+      const Eigen::VectorXd& mu() const { return mu_; }
+      const Eigen::MatrixXd& L() const { return L_; }
 
-      // Mutators
       void set_mu(const Eigen::VectorXd& mu) {
         static const char* function =
           "stan::variational::normal_fullrank::set_mu";
@@ -90,32 +71,30 @@ namespace stan {
         mu_ = mu;
       }
 
-      void set_L_chol(const Eigen::MatrixXd& L_chol) {
+      void set_L(const Eigen::MatrixXd& L) {
         static const char* function =
-          "stan::variational::normal_fullrank::set_L_chol";
+          "stan::variational::normal_fullrank::set_L";
 
-        stan::math::check_square(function, "Input matrix", L_chol_);
+        stan::math::check_square(function, "Input matrix", L_);
         stan::math::check_lower_triangular(function,
-                               "Input matrix", L_chol);
+                               "Input matrix", L);
         stan::math::check_size_match(function,
                                "Dimension of mean vector",     dimension_,
-                               "Dimension of input matrix", L_chol.rows());
-        stan::math::check_not_nan(function, "Input matrix", L_chol_);
-        L_chol_ = L_chol;
+                               "Dimension of input matrix", L.rows());
+        stan::math::check_not_nan(function, "Input matrix", L_);
+        L_ = L;
       }
 
-      // Operations
       normal_fullrank square() const {
         return normal_fullrank(Eigen::VectorXd(mu_.array().square()),
-                               Eigen::MatrixXd(L_chol_.array().square()));
+                               Eigen::MatrixXd(L_.array().square()));
       }
 
       normal_fullrank sqrt() const {
         return normal_fullrank(Eigen::VectorXd(mu_.array().sqrt()),
-                               Eigen::MatrixXd(L_chol_.array().sqrt()));
+                               Eigen::MatrixXd(L_.array().sqrt()));
       }
 
-      // Compound assignment operators
       normal_fullrank operator=(const normal_fullrank& rhs) {
         static const char* function =
           "stan::variational::normal_fullrank::operator=";
@@ -125,7 +104,7 @@ namespace stan {
                              "Dimension of rhs", rhs.dimension());
 
         mu_ = rhs.mu();
-        L_chol_ = rhs.L_chol();
+        L_ = rhs.L();
         return *this;
       }
 
@@ -138,7 +117,7 @@ namespace stan {
                              "Dimension of rhs", rhs.dimension());
 
         mu_ += rhs.mu();
-        L_chol_ += rhs.L_chol();
+        L_ += rhs.L();
         return *this;
       }
 
@@ -151,23 +130,22 @@ namespace stan {
                              "Dimension of rhs", rhs.dimension());
 
         mu_.array() /= rhs.mu().array();
-        L_chol_.array() /= rhs.L_chol().array();
+        L_.array() /= rhs.L().array();
         return *this;
       }
 
-      normal_fullrank operator+=(double scalar) {
-        mu_.array() += scalar;
-        L_chol_.array() += scalar;
+      normal_fullrank operator+=(double x) {
+        mu_.array() += x;
+        L_.array() += x;
         return *this;
       }
 
-      normal_fullrank operator*=(double scalar) {
-        mu_ *= scalar;
-        L_chol_ *= scalar;
+      normal_fullrank operator*=(double x) {
+        mu_ *= x;
+        L_ *= x;
         return *this;
       }
 
-      // Distribution-based operations
       const Eigen::VectorXd& mean() const {
         return mu();
       }
@@ -175,14 +153,9 @@ namespace stan {
       // 0.5 * dim * (1+log2pi) + 0.5 * log det (L^T L) =
       // 0.5 * dim * (1+log2pi) + sum(log(abs(diag(L))))
       double entropy() const {
-        double tmp = 0.0;
-        double result = 0.5 * static_cast<double>(dimension_) *
-          (1.0 + stan::math::LOG_TWO_PI);
+        double result = 0.5 * dimension_ * (1 + stan::math::LOG_TWO_PI);
         for (int d = 0; d < dimension_; ++d) {
-          tmp = fabs(L_chol_(d, d));
-          if (tmp != 0.0) {
-            result += log(tmp);
-          }
+          result += log(L_(d, d));
         }
         return result;
       }
@@ -197,22 +170,14 @@ namespace stan {
                          "Dimension of mean vector",  dimension_);
         stan::math::check_not_nan(function, "Input vector", eta);
 
-        return (L_chol_ * eta) + mu_;
+        return (L_ * eta) + mu_;
       }
 
-      /**
-       * Draws samples from the variational distribution, which in this case is
-       * a fullrank Gaussian.
-       *
-       * @tparam BaseRNG           class of random number generator
-       * @return                   a sample from the variational distribution
-       */
       template <class BaseRNG>
       Eigen::VectorXd sample(BaseRNG& rng) const {
-        Eigen::VectorXd eta = Eigen::VectorXd::Zero(dimension_);
+        Eigen::VectorXd eta(dimension_);
 
-        // Draw from standard normal and transform to real-coordinate space
-        for (int d = 0; d < dimension_; ++d) {
+        for (int d = 0; d < eta.size(); ++d) {
           eta(d) = stan::math::normal_rng(0, 1, rng);
         }
 
@@ -220,10 +185,8 @@ namespace stan {
       }
 
       /**
-       * Calculates the "blackbox" gradient with respect to BOTH the location
-       * vector (mu) and the cholesky factor of the scale matrix (L) in
-       * parallel. It uses the same gradient computed from a set of Monte Carlo
-       * samples
+       * Calculates the "blackbox" gradient with respect to the location vector
+       * (mu) and the cholesky factor of the scale matrix (L).
        *
        * @tparam M                     class of model
        * @tparam BaseRNG               class of random number generator
@@ -253,9 +216,9 @@ namespace stan {
         Eigen::VectorXd mu_grad = Eigen::VectorXd::Zero(dimension_);
         Eigen::MatrixXd L_grad  = Eigen::MatrixXd::Zero(dimension_, dimension_);
         double tmp_lp = 0.0;
-        Eigen::VectorXd tmp_mu_grad = Eigen::VectorXd::Zero(dimension_);
-        Eigen::VectorXd eta = Eigen::VectorXd::Zero(dimension_);
-        Eigen::VectorXd zeta = Eigen::VectorXd::Zero(dimension_);
+        Eigen::VectorXd tmp_mu_grad(dimension_);
+        Eigen::VectorXd eta(dimension_);
+        Eigen::VectorXd zeta(dimension_);
 
         // Naive Monte Carlo integration
         for (int i = 0; i < n_monte_carlo_grad; ++i) {
@@ -267,6 +230,10 @@ namespace stan {
 
           // Compute gradient step in real-coordinate space
           stan::model::gradient(m, zeta, tmp_lp, tmp_mu_grad, print_stream);
+          stan::math::check_not_nan(function, "tmp_lp", tmp_lp);
+          stan::math::check_finite(function, "tmp_lp", tmp_lp);
+          stan::math::check_not_nan(function, "tmp_mu_grad", tmp_mu_grad);
+          stan::math::check_finite(function, "tmp_mu_grad", tmp_mu_grad);
 
           // Update gradient parameters
           mu_grad += tmp_mu_grad;
@@ -280,30 +247,18 @@ namespace stan {
         L_grad  /= static_cast<double>(n_monte_carlo_grad);
 
         // Add gradient of entropy term
-        L_grad.diagonal().array() += L_chol_.diagonal().array().inverse();
+        L_grad.diagonal().array() += L_.diagonal().array().inverse();
 
         // Set parameters to argument
         elbo_grad.set_mu(mu_grad);
-        elbo_grad.set_L_chol(L_grad);
+        elbo_grad.set_L(L_grad);
       }
     };
 
-    // Arithmetic operators
-    normal_fullrank operator+(normal_fullrank lhs, const normal_fullrank& rhs) {
-      return lhs += rhs;
-    }
-
-    normal_fullrank operator/(normal_fullrank lhs, const normal_fullrank& rhs) {
-      return lhs /= rhs;
-    }
-
-    normal_fullrank operator+(double scalar, normal_fullrank rhs) {
-      return rhs += scalar;
-    }
-
-    normal_fullrank operator*(double scalar, normal_fullrank rhs) {
-      return rhs *= scalar;
-    }
+    normal_fullrank operator+(normal_fullrank lhs, const normal_fullrank& rhs) { return lhs += rhs; }
+    normal_fullrank operator/(normal_fullrank lhs, const normal_fullrank& rhs) { return lhs /= rhs; }
+    normal_fullrank operator+(double x, normal_fullrank rhs) { return rhs += x; }
+    normal_fullrank operator*(double x, normal_fullrank rhs) { return rhs *= x; }
   }  // variational
 }  // stan
 

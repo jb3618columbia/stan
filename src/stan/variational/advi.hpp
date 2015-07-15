@@ -95,14 +95,18 @@ namespace stan {
        */
       double calc_ELBO(const Q& variational) const {
         double elbo = 0.0;
+        double energy_i;
         int dim = variational.dimension();
-
         Eigen::VectorXd zeta(dim);
 
         for (int i = 0; i < n_monte_carlo_elbo_; ++i) {
           zeta = variational.sample(rng_);
-          // Accumulate log probability
-          elbo += model_.template log_prob<false, true>(zeta, print_stream_);
+
+          energy_i = model_.template log_prob<false, true>(zeta, print_stream_);
+          stan::math::check_not_nan(function, "energy_i", energy_i);
+          stan::math::check_finite(function, "energy_i", energy_i);
+
+          elbo += energy_i;
         }
 
         // Divide to get Monte Carlo integral estimate
@@ -159,6 +163,8 @@ namespace stan {
 
         // Adagrad parameters
         double tau = 1.0;
+        // TODO maybe a separate params class altogether, rather than storing
+        // the entire variational class again
         Q params_adagrad = Q(model_.num_params_r());
 
         // RMSprop window_size
